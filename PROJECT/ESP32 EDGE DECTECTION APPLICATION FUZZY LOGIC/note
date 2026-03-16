@@ -1,0 +1,5 @@
+Mặt nạ 2x2 [ Tối ưu cho esp32]
+đầu vào: 4 pixel [ P1, P2, P3, P4]
+tập mờ input : 2 tập black and white dùng hàm thuộc hình tam giác
+tập mờ output: black, edge và white
+luật mờ: 16 luật [ tài liệu 2010]
