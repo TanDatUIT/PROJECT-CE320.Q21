@@ -1,0 +1,19 @@
+# Local assistant/project notes
+CLAUDE.md
+.claude/
+
+# Python virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Local editor/system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
