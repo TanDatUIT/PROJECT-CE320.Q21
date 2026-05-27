@@ -12,6 +12,25 @@ ENV/
 __pycache__/
 *.py[cod]
 
+# External clones / references
+esp32-cam-webserver/
+
+# Arduino / firmware build outputs
+.pio/
+build/
+*.bin
+*.elf
+*.hex
+*.map
+*.o
+
+# Local camera captures and runtime logs
+pc_captures/
+pc_captures_filtered/
+pc_preview/
+pc_capture_log.csv
+pc_fuzzy_log.csv
+
 # Local editor/system files
 .vscode/
 .idea/
