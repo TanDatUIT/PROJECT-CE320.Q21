@@ -260,25 +260,28 @@ def load_existing_latest_capture() -> None:
     except Exception as exc:
         pc_result = {"gesture": "none", "confidence": 0.0, "reason": f"reload_err:{exc}"}
 
+    metrics = {
+        "edge_density": as_float("edge_density"),
+        "mean_strength": as_float("mean_strength"),
+        "hand": as_int("hand"),
+        "fingers": as_int("fingers"),
+        "gesture": latest.get("gesture") or gesture_from_code(as_int("fingers")),
+        "min_x": as_int("min_x", -1),
+        "min_y": as_int("min_y", -1),
+        "max_x": as_int("max_x", -1),
+        "max_y": as_int("max_y", -1),
+        "frame_time_ms": as_int("frame_time_ms"),
+        "frame": as_int("frame"),
+    }
+    pc_result = apply_esp_hand_gate(pc_result, metrics)
+
     capture = {
         "pc_time": latest.get("pc_time") or "",
         "time_ms": as_int("esp_time_ms", int(time.time() * 1000)),
         "filename": filename,
         "path": str(CAPTURE_DIR / filename),
         "pc_fuzzy": pc_result,
-        "metrics": {
-            "edge_density": as_float("edge_density"),
-            "mean_strength": as_float("mean_strength"),
-            "hand": as_int("hand"),
-            "fingers": as_int("fingers"),
-            "gesture": latest.get("gesture") or gesture_from_code(as_int("fingers")),
-            "min_x": as_int("min_x", -1),
-            "min_y": as_int("min_y", -1),
-            "max_x": as_int("max_x", -1),
-            "max_y": as_int("max_y", -1),
-            "frame_time_ms": as_int("frame_time_ms"),
-            "frame": as_int("frame"),
-        },
+        "metrics": metrics,
     }
     STATE.set_existing_capture(capture, len(rows))
     STATE.add_line(f"[PC] Loaded latest saved capture: {filename}")
@@ -333,6 +336,39 @@ def gesture_from_code(code: int) -> str:
     if code == 1:
         return "fist"
     return "none"
+
+
+def apply_esp_hand_gate(pc_result: dict[str, object], metrics: dict[str, object] | None) -> dict[str, object]:
+    """Khong cho PC fuzzy tu bat tay khi ESP da ket luan khong co tay."""
+    if not metrics:
+        return pc_result
+
+    try:
+        esp_hand = int(metrics.get("hand", 1))
+    except (TypeError, ValueError):
+        return pc_result
+
+    if esp_hand != 0:
+        return pc_result
+
+    raw_gesture = str(pc_result.get("gesture") or "none")
+    raw_conf = pc_result.get("confidence", 0.0)
+    raw_reason = str(pc_result.get("reason") or "")
+    if raw_gesture == "none":
+        return pc_result
+
+    gated = dict(pc_result)
+    edge = metrics.get("edge_density", "?")
+    esp_gesture = metrics.get("gesture", "none")
+    gated["raw_gesture"] = raw_gesture
+    gated["raw_confidence"] = raw_conf
+    gated["gesture"] = "none"
+    gated["confidence"] = 1.0
+    gated["reason"] = (
+        f"esp_gate_no_hand(edge={edge},esp={esp_gesture});"
+        f"raw={raw_gesture}/{raw_conf};{raw_reason}"
+    )
+    return gated
 
 
 def clamp_float(value: object, default: float, lo: float, hi: float) -> float:
@@ -438,6 +474,7 @@ def serial_worker(port: str, baudrate: int) -> None:
                             pc_result = pc_fuzzy.analyze_jpeg(image_bytes).to_dict()
                         except Exception as exc:
                             pc_result = {"gesture": "none", "confidence": 0.0, "reason": f"err:{exc}"}
+                        pc_result = apply_esp_hand_gate(pc_result, pending_metrics)
 
                         gesture_tag = str(pc_result.get("gesture") or "none")
                         conf_tag = pc_result.get("confidence") or 0
