@@ -178,7 +178,7 @@ def save_debug_snapshot(snapshot: dict[str, object]) -> dict[str, object]:
     latest = snapshot.get("latest")
     if not isinstance(latest, dict):
         raise ValueError("no latest frame to snap")
-    image_b64 = latest.get("image_b64")
+    image_b64 = latest.get("raw_image_b64") or latest.get("image_b64")
     if not isinstance(image_b64, str) or not image_b64:
         raise ValueError("latest frame has no image")
 
@@ -193,9 +193,15 @@ def save_debug_snapshot(snapshot: dict[str, object]) -> dict[str, object]:
     json_path = SNAP_DIR / f"{stem}.json"
 
     jpg_path.write_bytes(base64.b64decode(image_b64))
+    annotated_path = None
+    annotated_b64 = latest.get("image_b64")
+    if isinstance(annotated_b64, str) and annotated_b64 and annotated_b64 != image_b64:
+        annotated_path = SNAP_DIR / f"{stem}_annotated.jpg"
+        annotated_path.write_bytes(base64.b64decode(annotated_b64))
     debug_data = {
         "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "jpg": str(jpg_path),
+        "annotated_jpg": str(annotated_path) if annotated_path else "",
         "frame_count": snapshot.get("frame_count"),
         "camera_url": snapshot.get("camera_url"),
         "camera_config": snapshot.get("camera_config"),
@@ -206,6 +212,7 @@ def save_debug_snapshot(snapshot: dict[str, object]) -> dict[str, object]:
     json_path.write_text(json.dumps(debug_data, ensure_ascii=False, indent=2), encoding="utf-8")
     return {
         "jpg": str(jpg_path),
+        "annotated_jpg": str(annotated_path) if annotated_path else "",
         "json": str(json_path),
         "gesture": gesture,
         "fingers": fingers,
@@ -218,9 +225,14 @@ def worker(camera_url: str, interval_s: float, timeout_s: float, save_every: int
     STATE.set_source(camera_url)
     analyzer = PCFuzzyStrong(prefer_mediapipe=True)
     STATE.add_line(f"[PC] Camera URL: {camera_url}")
+    analyzer_mode = (
+        "mediapipe_tasks"
+        if getattr(analyzer, "task_landmarker", None) is not None
+        else "mediapipe_legacy" if analyzer.hands is not None else "opencv_fallback"
+    )
     STATE.add_line(
         "[PC] Analyzer: "
-        + ("mediapipe" if analyzer.hands is not None else "opencv_fallback")
+        + analyzer_mode
         + (f" ({analyzer.backend_note})" if analyzer.backend_note else "")
     )
     if "<" in camera_url or ">" in camera_url:
@@ -244,6 +256,7 @@ def worker(camera_url: str, interval_s: float, timeout_s: float, save_every: int
             latest = {
                 "pc_time": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "filename": filename,
+                "raw_image_b64": base64.b64encode(image_bytes).decode("ascii"),
                 "image_b64": base64.b64encode(annotated or image_bytes).decode("ascii"),
                 "result": result_dict,
             }
@@ -372,6 +385,10 @@ img{display:block;width:100%;height:100%;object-fit:contain;background:#111}
 .muted{color:#586270}
 .controls{display:grid;grid-template-columns:116px minmax(0,1fr) 36px;gap:8px;align-items:center;margin:12px 0 4px}
 .controls input{width:100%}
+.buttonRow{display:flex;gap:8px;align-items:center;margin:12px 0;flex-wrap:wrap}
+button{border:1px solid #b7c0cc;background:#f8fafc;border-radius:6px;padding:8px 12px;font-size:14px;cursor:pointer}
+button:hover{background:#edf2f7}
+#snapStatus{font-size:13px;color:#586270;overflow-wrap:anywhere}
 pre{height:260px;overflow:auto;background:#0d1117;color:#d1d5db;padding:12px;border-radius:6px;font-size:12px}
 table{width:100%;border-collapse:collapse;table-layout:fixed}td{border-bottom:1px solid #edf0f2;padding:7px 4px;vertical-align:top;overflow-wrap:anywhere;word-break:break-word}td:first-child{width:116px;color:#2d333a}
 #status{overflow-wrap:anywhere}
@@ -393,6 +410,25 @@ table{width:100%;border-collapse:collapse;table-layout:fixed}td{border-bottom:1p
       <label for="brightness">brightness</label>
       <input id="brightness" type="range" min="-2" max="2" step="1" value="0">
       <span id="brightnessValue">0</span>
+    </div>
+    <div class="controls">
+      <label for="contrast">contrast</label>
+      <input id="contrast" type="range" min="-2" max="2" step="1" value="1">
+      <span id="contrastValue">1</span>
+    </div>
+    <div class="controls">
+      <label for="saturation">saturation</label>
+      <input id="saturation" type="range" min="-2" max="2" step="1" value="0">
+      <span id="saturationValue">0</span>
+    </div>
+    <div class="controls">
+      <label for="quality">quality</label>
+      <input id="quality" type="range" min="10" max="30" step="1" value="14">
+      <span id="qualityValue">14</span>
+    </div>
+    <div class="buttonRow">
+      <button id="snapBtn" type="button">Snap Debug (S)</button>
+      <span id="snapStatus">-</span>
     </div>
     <table>
       <tr><td>confidence</td><td id="confidence">-</td></tr>
@@ -425,28 +461,74 @@ async function refresh(){
     document.getElementById('frame_ms').textContent = r.frame_ms ?? '-';
     document.getElementById('reason').textContent = r.reason || '-';
   }
-  const cfg = s.camera_config || {};
-  if(document.activeElement !== document.getElementById('brightness')){
-    document.getElementById('brightness').value = cfg.brightness ?? 0;
-    document.getElementById('brightnessValue').textContent = cfg.brightness ?? 0;
-  }
+  syncControls(s.camera_config || {});
   document.getElementById('log').textContent = (s.lines || []).slice().reverse().join('\\n');
 }
-let brightnessTimer = null;
-document.getElementById('brightness').addEventListener('input', (ev) => {
-  const value = Number(ev.target.value);
-  document.getElementById('brightnessValue').textContent = value;
-  clearTimeout(brightnessTimer);
-  brightnessTimer = setTimeout(async () => {
+const controlIds = ['brightness', 'contrast', 'saturation', 'quality'];
+let cameraConfig = {brightness:0, contrast:1, saturation:0, quality:14};
+let configTimer = null;
+function syncControls(cfg){
+  cameraConfig = {...cameraConfig, ...cfg};
+  for(const id of controlIds){
+    const input = document.getElementById(id);
+    if(document.activeElement !== input){
+      input.value = cameraConfig[id] ?? input.value;
+    } else {
+      cameraConfig[id] = Number(input.value);
+    }
+    document.getElementById(id + 'Value').textContent = input.value;
+  }
+}
+function scheduleConfigUpdate(){
+  clearTimeout(configTimer);
+  configTimer = setTimeout(async () => {
     const res = await fetch('/api/camera_config', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({brightness: value})
+      body: JSON.stringify(cameraConfig)
     }).then(r => r.json()).catch(err => ({ok:false,error:String(err)}));
     if(!res.ok){
-      document.getElementById('status').textContent = 'brightness error | ' + (res.error || 'unknown');
+      document.getElementById('status').textContent = 'camera config error | ' + (res.error || 'unknown');
+    } else {
+      cameraConfig = {...cameraConfig, ...(res.camera_config || {})};
+      syncControls(cameraConfig);
     }
   }, 180);
+}
+for(const id of controlIds){
+  document.getElementById(id).addEventListener('input', (ev) => {
+    const value = Number(ev.target.value);
+    cameraConfig[id] = value;
+    document.getElementById(id + 'Value').textContent = value;
+    scheduleConfigUpdate();
+  });
+}
+async function saveSnapDebug(){
+  document.getElementById('snapStatus').textContent = 'saving...';
+  const res = await fetch('/api/snapshot', {method:'POST'})
+    .then(r => r.json())
+    .catch(err => ({ok:false,error:String(err)}));
+  if(!res.ok){
+    document.getElementById('snapStatus').textContent = 'snap error: ' + (res.error || 'unknown');
+    return;
+  }
+  const saved = res.saved || {};
+  document.getElementById('snapStatus').textContent =
+    `saved ${saved.gesture || '-'} f=${saved.fingers ?? '-'} | ${saved.jpg || ''}`;
+}
+function isEditableTarget(target){
+  const tag = String(target?.tagName || '').toUpperCase();
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || Boolean(target?.isContentEditable);
+}
+document.getElementById('snapBtn').addEventListener('click', saveSnapDebug);
+document.addEventListener('keydown', (ev) => {
+  if(ev.repeat || isEditableTarget(ev.target)){
+    return;
+  }
+  if(String(ev.key || '').toLowerCase() === 's'){
+    ev.preventDefault();
+    saveSnapDebug();
+  }
 });
 setInterval(refresh, 700);
 refresh();

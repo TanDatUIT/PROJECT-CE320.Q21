@@ -1,0 +1,32 @@
+{
+  "saved_at": "2026-05-28 19:39:27",
+  "jpg": "D:\\HOCTAP\\PROJECT-CE320.Q21\\esp32cam_pc_fuzzy\\data\\debug_snaps\\snap_20260528_193927_000119_none_f0.jpg",
+  "frame_count": 119,
+  "camera_url": "http://192.168.1.166/capture",
+  "camera_config": {
+    "brightness": 0,
+    "contrast": 1,
+    "saturation": 0,
+    "quality": 14
+  },
+  "pc_time": "2026-05-28 19:39:27",
+  "filename": "",
+  "result": {
+    "gesture": "none",
+    "confidence": 0.9,
+    "fingers": 0,
+    "mode": "mediapipe_tasks",
+    "bbox": [
+      -1,
+      -1,
+      -1,
+      -1
+    ],
+    "area_ratio": 0.0,
+    "reason": "mp_tasks_no_hand",
+    "frame_ms": 26.68,
+    "handedness": "",
+    "finger_scores": null,
+    "landmarks": null
+  }
+}

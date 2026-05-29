@@ -1,16 +1,40 @@
 # ESP32-CAM PC FUZZY
 
-Project moi tach rieng cho huong:
+Project tach ESP32-CAM va PC FUZZY:
 
 ```text
-ESP32-CAM -> stream/snapshot JPEG qua Wi-Fi
-PC Python -> xu ly anh bang OpenCV/MediaPipe -> fuzzy none/fist/open
-Web local -> hien thi anh, landmark/result, log
+ESP32-CAM -> chup JPEG / stream qua Wi-Fi
+PC Python -> MediaPipe landmark + fuzzy logic + OpenCV fallback
+Web local -> xem anh, ket qua, log, chinh camera, snap debug
 ```
 
-Muc tieu la de ESP32-CAM chi phu trach camera, con PC FUZZY xu ly nang hon.
+Muc tieu: ESP32-CAM chi phu trach camera, PC xu ly nhan dien manh hon.
 
-## 1. Nap ESP32-CAM
+## 1. Trang thai moi nhat
+
+Cap nhat ngay 2026-05-28:
+
+- PC server dung `MediaPipe Tasks Hand Landmarker` lam backend chinh.
+- Ket qua bai toan hien tai la `none`, `fist`, va `open` kem so ngon `fingers=1..5`.
+- `fist` duoc tinh rieng: nam tay thi `gesture=fist`, `fingers=0`.
+- Khi MediaPipe khong thay tay, server thu `opencv_fallback` de bat `fist/open` theo contour.
+- Khi chi co 1-4 ngon va bi cat mat long ban tay, server dung `opencv_partial_fingers`.
+- Web co phim `S` de chup `Snap Debug`.
+- Snap debug moi luu raw frame sach, anh annotated va JSON metadata.
+
+## 2. Gesture hien tai
+
+Ket qua chinh tren web gom `gesture`, `fingers`, `mode`, `reason`.
+
+```text
+none          khong thay tay hop le
+fist          nam tay, fingers=0
+open f=1..5   co ngon tay dang gio; so ngon nam trong truong fingers
+```
+
+Luu y: voi 1-4 ngon bi cat mat long ban tay, server co the hien `mode=opencv_partial_fingers`. Day la nhanh du phong, chinh xac kem MediaPipe nhung giup tranh bi `none`.
+
+## 3. Nap ESP32-CAM
 
 Mo sketch:
 
@@ -27,22 +51,27 @@ const char* WIFI_PASS = "YOUR_WIFI_PASSWORD";
 
 Nap bang Arduino IDE cho board `AI Thinker ESP32-CAM`.
 
-Sau khi chay, Serial Monitor `115200` se in:
+Sau khi boot, Serial Monitor `115200` se in:
 
 ```text
 PC capture URL: http://<ESP_IP>/capture
 Browser stream: http://<ESP_IP>:81/stream
+READY
 ```
 
-Sketch co endpoint camera control:
+Endpoint ESP32:
 
 ```text
-http://<ESP_IP>/control?brightness=-2..2
+http://<ESP_IP>/capture
+http://<ESP_IP>:81/stream
+http://<ESP_IP>/control?brightness=-2..2&contrast=-2..2&saturation=-2..2&quality=10..30
 ```
 
-## 2. Chay PC server
+Khi chi sua PC server hoac README, khong can nap lai ESP32.
 
-PowerShell:
+## 4. Chay PC server
+
+PowerShell, chay lan dau:
 
 ```powershell
 cd "D:\HOCTAP\PROJECT-CE320.Q21\esp32cam_pc_fuzzy\pc_server"
@@ -51,14 +80,20 @@ py -3 -m venv .venv
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 python -m pip install -r requirements-mediapipe.txt
-python .\pc_server.py --camera-url "http://<ESP_IP>/capture" --web-port 5000
 ```
 
-`<ESP_IP>` phai thay bang IP that cua ESP32-CAM, khong go nguyen dau `< >`.
-Vi du:
+PowerShell, chay hang ngay:
 
 ```powershell
-python .\pc_server.py --camera-url "http://192.168.1.25/capture" --web-port 5000
+cd "D:\HOCTAP\PROJECT-CE320.Q21\esp32cam_pc_fuzzy\pc_server"
+.\.venv\Scripts\Activate.ps1
+python .\pc_server.py --camera-url "http://<ESP_IP>/capture" --web-port 5000 --timeout 6
+```
+
+Vi du voi IP gan day:
+
+```powershell
+python .\pc_server.py --camera-url "http://192.168.1.166/capture" --web-port 5000 --timeout 6
 ```
 
 Mo web:
@@ -67,26 +102,97 @@ Mo web:
 http://127.0.0.1:5000
 ```
 
-Neu `mediapipe` cai khong duoc tren Python hien tai, server van chay bang OpenCV fallback, nhung nen dung Python 3.10-3.12 de co MediaPipe tot hon.
+`<ESP_IP>` phai thay bang IP that ESP32-CAM in tren Serial Monitor. Khong go nguyen dau `< >`.
 
-## 3. Luong chay
+## 5. Web dieu khien
 
-- ESP32 endpoint `/capture`: tra ve 1 anh JPEG moi nhat cho PC doc dinh ky.
-- ESP32 endpoint `:81/stream`: xem live tren browser. Stream tach port de khong khoa `/capture`.
-- Web PC co thanh `brightness` de goi ESP `/control` va chinh sang camera runtime.
-- PC server luu anh vao `data/captures/`.
-- `pc_fuzzy_strong.py` uu tien MediaPipe hand landmarks; neu thieu MediaPipe thi fallback OpenCV contour.
+- Khung anh ben trai la anh PC da xu ly va ve overlay.
+- Khung vang `hand ROI` la vung nen dua tay vao.
+- Cac thanh `brightness`, `contrast`, `saturation`, `quality` goi ESP `/control` de chinh camera runtime.
+- Nut `Snap Debug` hoac phim `S` de chup debug nhanh.
+- Log duoi cung hien ly do nhan dien va loi camera neu co.
 
-## 4. Ghi chu thuc nghiem
+File debug nam trong:
 
-- Nen uu tien nen don, camera co dinh, anh khong qua nguoc sang.
-- Khi dung MediaPipe, co nguoi trong nen van co the phat hien tay nguoi do neu tay lo ro. Cach giam sai la gioi han ROI hoac dat vung tay truoc camera.
-- Khi can chay nhanh hon, tang `--interval`, vi du `--interval 0.5`.
+```text
+D:\HOCTAP\PROJECT-CE320.Q21\esp32cam_pc_fuzzy\data\debug_snaps
+```
 
-## 5. Kich ban demo de giam sai
+Moi lan snap se co:
 
-- Dat ban tay trong khung `hand ROI` mau vang tren web PC.
-- De mat va ao ra ngoai khung ROI neu co the; neu khong, dua camera xuong ngang ban/tuong.
-- Nen de ban tay cach camera khoang 25-45 cm, xoe ro nam ngon, khong de ngon cai bi che.
-- Anh qua sang thi giam den chieu thang vao camera; uu tien anh co bong tay ro hon la anh sang trang phang.
-- Neu dung Python 3.13, server co the chi chay `opencv_fallback`. Khi do ket qua nen xem la `none/fist/open`; so `fingers=5` la quy uoc cho open palm, khong phai dem landmark that.
+```text
+snap_...jpg             raw frame sach, dung de replay/debug
+snap_..._annotated.jpg  anh co overlay neu co
+snap_...json            gesture, fingers, bbox, reason, camera_config
+```
+
+## 6. Backend nhan dien
+
+Backend uu tien theo thu tu:
+
+```text
+MediaPipe Tasks Hand Landmarker
+-> fuzzy score tung ngon
+-> OpenCV full fallback cho fist/open contour
+-> OpenCV partial fingers cho 1-4 ngon bi cat long ban tay
+```
+
+Model MediaPipe:
+
+```text
+pc_server\models\hand_landmarker.task
+```
+
+Fuzzy MediaPipe tinh score cho:
+
+```text
+thumb, index, middle, ring, pinky
+```
+
+Neu tat ca score duoi nguong mo rong, ket qua la:
+
+```text
+gesture=fist
+fingers=0
+reason=mp_all_folded
+```
+
+Neu model/API MediaPipe thieu, server tu quay ve `opencv_fallback`.
+
+## 7. Checklist test nhanh
+
+Sau khi restart PC server:
+
+1. Mo `http://127.0.0.1:5000`.
+2. Dua tay vao khung `hand ROI`.
+3. Test `fist`: nam tay gon, ket qua mong doi `gesture=fist`, `fingers=0`.
+4. Test 1 ngon: dua 1 ngon ro, ket qua mong doi `gesture=open`, `fingers=1`.
+5. Test 2-4 ngon: dua ngon ro va tach nhau, ket qua mong doi `fingers=2..4`.
+6. Test 5 ngon: xoe ban tay ro, ket qua mong doi `fingers=5`.
+7. Neu sai, bam `S` de chup debug va xem file `.json` trong `data\debug_snaps`.
+
+## 8. Kich ban demo de giam sai
+
+- Dat ban tay trong khung `hand ROI`.
+- Nen dua camera xuong ban hoac tuong de mat/ao ra ngoai ROI.
+- De ban tay cach camera khoang 25-45 cm.
+- Khi test `fist`, nam tay gon, giu long ban tay/nam tay trong ROI.
+- Khi test 1-4 ngon, dua cac ngon vao ROI; neu khong thay long ban tay thi ket qua co the la `opencv_partial_fingers`.
+- Neu anh qua sang, giam `brightness`, giam den chieu thang vao camera, uu tien co bong/duong bien tay ro.
+- Neu `/capture` timeout, kiem tra ESP32 va laptop cung Wi-Fi, dung dung IP moi tren Serial Monitor.
+
+## 9. Loi thuong gap
+
+Neu go nham PowerShell trong WSL se gap loi kieu `D:\... No such file or directory`. Khi do mo PowerShell that va chay lai lenh Windows.
+
+Neu URL con dang:
+
+```text
+http://<ESP_IP>/capture
+```
+
+thi server se khong ket noi duoc. Phai thay bang IP that, vi du:
+
+```text
+http://192.168.1.166/capture
+```

@@ -14,8 +14,8 @@
 #include <WiFi.h>
 
 // Sua theo Wi-Fi dang dung.
-const char* WIFI_SSID = "Dat Dat";
-const char* WIFI_PASS = "12345678";
+const char* WIFI_SSID = "Bich Tram";
+const char* WIFI_PASS = "99999999";
 
 // Pin map AI-Thinker ESP32-CAM
 #define PWDN_GPIO_NUM     32
