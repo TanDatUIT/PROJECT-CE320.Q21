@@ -21,6 +21,7 @@ DATA_DIR = ROOT.parent / "data"
 CAPTURE_DIR = DATA_DIR / "captures"
 SNAP_DIR = DATA_DIR / "debug_snaps"
 CSV_PATH = DATA_DIR / "pc_fuzzy_log.csv"
+SERVER_STARTED_AT = time.time()
 
 
 class State:
@@ -60,6 +61,7 @@ class State:
         with self.lock:
             self.frame_count += 1
             latest["index"] = self.frame_count
+            latest["updated_monotonic"] = time.monotonic()
             self.latest = latest
 
     def snapshot(self) -> dict[str, object]:
@@ -72,6 +74,36 @@ class State:
                 "running": self.running,
                 "error": self.error,
                 "camera_config": dict(self.camera_config),
+            }
+
+    def display_snapshot(self) -> dict[str, object]:
+        with self.lock:
+            latest = self.latest if isinstance(self.latest, dict) else None
+            result = latest.get("result") if latest and isinstance(latest.get("result"), dict) else {}
+            pc_time = latest.get("pc_time", "") if latest else ""
+            index = latest.get("index", 0) if latest else 0
+            updated_monotonic = latest.get("updated_monotonic", 0.0) if latest else 0.0
+
+            age_ms = 0
+            if isinstance(updated_monotonic, (int, float)) and updated_monotonic > 0:
+                age_ms = int(max(0.0, time.monotonic() - updated_monotonic) * 1000)
+
+            return {
+                "ok": bool(latest) and self.running and not self.error,
+                "running": self.running,
+                "error": self.error,
+                "gesture": str(result.get("gesture") or "none"),
+                "fingers": int(result.get("fingers") or 0),
+                "confidence": float(result.get("confidence") or 0.0),
+                "mode": str(result.get("mode") or ""),
+                "reason": str(result.get("reason") or ""),
+                "frame_ms": float(result.get("frame_ms") or 0.0),
+                "area_ratio": float(result.get("area_ratio") or 0.0),
+                "frame_count": self.frame_count,
+                "latest_index": int(index or 0),
+                "latest_pc_time": str(pc_time),
+                "uptime_ms": int(max(0.0, time.time() - SERVER_STARTED_AT) * 1000),
+                "age_ms": age_ms,
             }
 
 
@@ -291,6 +323,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_html()
         elif parsed.path == "/api/state":
             self.send_json(STATE.snapshot())
+        elif parsed.path == "/api/display":
+            self.send_json(STATE.display_snapshot())
         else:
             self.send_error(404)
 
@@ -547,6 +581,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="PC FUZZY strong server for ESP32-CAM snapshots")
     parser.add_argument("--camera-url", required=True, help="ESP32 URL, usually http://<ESP_IP>/capture")
     parser.add_argument("--web-port", type=int, default=5000)
+    parser.add_argument("--host", default="0.0.0.0", help="Web bind host, use 0.0.0.0 for ESP32 clients")
     parser.add_argument("--interval", type=float, default=0.35, help="Seconds between PC polls")
     parser.add_argument("--timeout", type=float, default=2.5, help="Camera fetch timeout in seconds")
     parser.add_argument("--save-every", type=int, default=10, help="Save annotated image every N frames, 0 disables")
@@ -559,8 +594,9 @@ def main() -> None:
     )
     thread.start()
 
-    server = ThreadingHTTPServer(("127.0.0.1", args.web_port), Handler)
-    print(f"[PC] Web: http://127.0.0.1:{args.web_port}", flush=True)
+    server = ThreadingHTTPServer((args.host, args.web_port), Handler)
+    print(f"[PC] Web: http://{args.host}:{args.web_port}", flush=True)
+    print(f"[PC] ESP display API: http://<PC_IP>:{args.web_port}/api/display", flush=True)
     print(f"[PC] Camera: {args.camera_url}", flush=True)
     server.serve_forever()
 
